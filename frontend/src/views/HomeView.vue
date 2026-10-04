@@ -5,10 +5,13 @@ import api from '../api'
 const lofts = ref([])
 const rolls = ref([])
 const dips = ref([])
+const stickers = ref([])
 const error = ref('')
 const panelError = ref('')
 const selectedId = ref(null)
 const panelBusy = ref(false)
+const cureBusyId = ref(null)
+const cureDrafts = reactive({})
 
 const statusLabel = { raw: '原布', dipping: '浸渍中', cured: '已固化' }
 
@@ -25,7 +28,33 @@ function localNow() {
   return d.toISOString().slice(0, 16)
 }
 
+function errMsg(e, fallback) {
+  const d = e.response?.data
+  if (!d) return fallback
+  if (typeof d === 'string') return d
+  if (d.detail) return d.detail
+  for (const key of ['cureHours', 'status', 'stopDate', 'nonFieldErrors']) {
+    const v = d[key]
+    if (Array.isArray(v) && v.length) return String(v[0])
+    if (typeof v === 'string') return v
+  }
+  return fallback
+}
+
 const selected = computed(() => rolls.value.find((r) => r.id === selectedId.value) || null)
+
+const stickerByLoft = computed(() => {
+  const map = new Map()
+  for (const s of stickers.value) {
+    if (!s.voidedAt) map.set(s.loftId, s)
+  }
+  return map
+})
+
+const selectedSticker = computed(() => {
+  if (!selected.value) return null
+  return stickerByLoft.value.get(selected.value.loftId) || null
+})
 
 const rollsByLoft = computed(() => {
   return lofts.value.map((loft) => ({
@@ -44,14 +73,19 @@ const recentFeed = computed(() => dips.value.slice(0, 12))
 async function load() {
   error.value = ''
   try {
-    const [l, r, d] = await Promise.all([
+    const [l, r, d, s] = await Promise.all([
       api.get('/lofts/'),
       api.get('/rolls/'),
       api.get('/dips/'),
+      api.get('/stickers/', { params: { current: 1 } }),
     ])
     lofts.value = l.data.results || l.data
     rolls.value = r.data.results || r.data
     dips.value = d.data.results || d.data
+    stickers.value = s.data.results || s.data
+    for (const dip of dips.value) {
+      cureDrafts[dip.id] = dip.cureHours ?? ''
+    }
   } catch {
     error.value = '晾晒架加载失败'
   }
@@ -79,11 +113,7 @@ async function setStatus(status) {
     await api.patch(`/rolls/${selected.value.id}/`, { status })
     await load()
   } catch (e) {
-    const data = e.response?.data
-    panelError.value =
-      data?.status?.[0] ||
-      data?.detail ||
-      '状态更新失败（标「已固化」需最近浸渍固化时长 ≥ 12 小时）'
+    panelError.value = errMsg(e, '状态更新失败（标「已固化」需最近浸渍固化时长 ≥ 12 小时）')
   } finally {
     panelBusy.value = false
   }
@@ -116,12 +146,25 @@ async function logDip() {
     dipForm.startedAt = localNow()
     await load()
   } catch (e) {
-    panelError.value =
-      e.response?.data?.detail ||
-      JSON.stringify(e.response?.data) ||
-      '登记浸渍失败'
+    panelError.value = errMsg(e, '登记浸渍失败')
   } finally {
     panelBusy.value = false
+  }
+}
+
+async function saveCureHours(dip) {
+  panelError.value = ''
+  cureBusyId.value = dip.id
+  try {
+    const raw = cureDrafts[dip.id]
+    await api.patch(`/dips/${dip.id}/`, {
+      cureHours: raw === '' || raw === null ? null : raw,
+    })
+    await load()
+  } catch (e) {
+    panelError.value = errMsg(e, '保存固化时长失败')
+  } finally {
+    cureBusyId.value = null
   }
 }
 
@@ -133,7 +176,10 @@ onMounted(load)
     <header class="rack-head">
       <div>
         <h1>帆布间晾晒架</h1>
-        <p class="sub">按帆布间挂卷；点选布卷登记浸渍或标固化。固化规则：最近浸渍时长 ≥ 12 小时。</p>
+        <p class="sub">
+          按帆布间挂卷；点选布卷登记浸渍或标固化。固化规则：最近浸渍时长 ≥ 12 小时；
+          补写/改写时长还须该间湿度计贴纸在止日内。
+        </p>
       </div>
       <button class="btn secondary" type="button" @click="load">刷新架面</button>
     </header>
@@ -149,6 +195,10 @@ onMounted(load)
         <div class="bay-rail">
           <span class="bay-name">{{ group.loft.name }}</span>
           <span class="bay-meta">{{ group.loft.location || '工位' }} · {{ group.rolls.length }} 卷</span>
+          <span v-if="stickerByLoft.get(group.loft.id)" class="bay-meta">
+            贴纸止日 {{ stickerByLoft.get(group.loft.id).stopDate }}<template v-if="stickerByLoft.get(group.loft.id).isExpired">（已过）</template>
+          </span>
+          <span v-else class="bay-meta">无现行贴纸</span>
         </div>
         <div class="peg-row">
           <button
@@ -210,6 +260,13 @@ onMounted(load)
         </span>
         <span class="hint">{{ selected.fabricWeightGsm }} gsm</span>
       </div>
+
+      <p v-if="selectedSticker" class="hint">
+        湿度计贴纸：{{ selectedSticker.instrumentNo }} · 止日 {{ selectedSticker.stopDate }}
+        <template v-if="selectedSticker.isExpired">（已过止日，禁止补写/改写时长）</template>
+      </p>
+      <p v-else class="hint">湿度计贴纸：本间无现行贴纸，禁止补写/改写时长</p>
+
       <p v-if="selected.notes" class="hint">{{ selected.notes }}</p>
       <p v-if="panelError" class="error">{{ panelError }}</p>
 
@@ -248,7 +305,7 @@ onMounted(load)
         <label>树脂 %
           <input v-model.number="dipForm.resinPct" type="number" step="0.1" required />
         </label>
-        <label>固化时长 h（可空）
+        <label>固化时长 h（可空；留空不看贴纸）
           <input v-model="dipForm.cureHours" type="number" step="0.1" />
         </label>
         <label>备注
@@ -258,12 +315,27 @@ onMounted(load)
       </form>
 
       <div class="drawer-history">
-        <h3>本卷浸渍</h3>
+        <h3>本卷浸渍 · 补写/改写时长</h3>
         <ul v-if="selectedDips.length" class="feed-list compact">
           <li v-for="row in selectedDips" :key="row.id">
             <span>{{ new Date(row.startedAt).toLocaleString() }}</span>
             <span>{{ row.resinPct }}%</span>
-            <span>{{ row.cureHours ?? '—' }} h</span>
+            <input
+              v-model="cureDrafts[row.id]"
+              class="cure-input"
+              type="number"
+              step="0.1"
+              min="0"
+              placeholder="时长 h"
+            />
+            <button
+              class="btn secondary"
+              type="button"
+              :disabled="cureBusyId === row.id"
+              @click="saveCureHours(row)"
+            >
+              保存时长
+            </button>
           </li>
         </ul>
         <p v-else class="hint" style="margin:0">本卷尚无浸渍</p>

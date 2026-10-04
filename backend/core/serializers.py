@@ -1,7 +1,8 @@
+from django.utils import timezone
 from rest_framework import serializers
 
-from .models import ClothRoll, DipRun, Loft
-from .rules import can_mark_roll_cured
+from .models import ClothRoll, DipRun, HygrometerSticker, Loft
+from .rules import can_mark_roll_cured, cure_hours_gate
 
 
 class LoftSerializer(serializers.ModelSerializer):
@@ -93,3 +94,126 @@ class DipRunSerializer(serializers.ModelSerializer):
             "created_at",
         )
         read_only_fields = ("id", "rollCode", "loftName", "created_at")
+
+    def validate(self, attrs):
+        # 保存固化时长（含新建时直接填时长）须过贴纸闸门；时长留空不看贴纸
+        if attrs.get("cure_hours") is not None:
+            roll = attrs.get("roll") or getattr(self.instance, "roll", None)
+            if roll is not None:
+                ok, msg = cure_hours_gate(roll.loft)
+                if not ok:
+                    raise serializers.ValidationError({"cureHours": msg})
+        return attrs
+
+
+class DipRunPatchSerializer(serializers.ModelSerializer):
+    """补写/改写既有浸渍记录的固化时长（及备注）；其余字段只读。"""
+
+    cureHours = serializers.DecimalField(
+        source="cure_hours",
+        max_digits=6,
+        decimal_places=2,
+        required=False,
+        allow_null=True,
+    )
+    rollCode = serializers.CharField(source="roll.roll_code", read_only=True)
+    loftName = serializers.CharField(source="roll.loft.name", read_only=True)
+    startedAt = serializers.DateTimeField(source="started_at", read_only=True)
+    resinPct = serializers.DecimalField(
+        source="resin_pct", max_digits=5, decimal_places=2, read_only=True
+    )
+
+    class Meta:
+        model = DipRun
+        fields = (
+            "id",
+            "rollCode",
+            "loftName",
+            "startedAt",
+            "resinPct",
+            "cureHours",
+            "notes",
+            "created_at",
+        )
+        read_only_fields = (
+            "id",
+            "rollCode",
+            "loftName",
+            "startedAt",
+            "resinPct",
+            "created_at",
+        )
+
+    def validate(self, attrs):
+        if attrs.get("cure_hours") is not None:
+            ok, msg = cure_hours_gate(self.instance.roll.loft)
+            if not ok:
+                raise serializers.ValidationError({"cureHours": msg})
+        return attrs
+
+
+class HygrometerStickerSerializer(serializers.ModelSerializer):
+    loftId = serializers.PrimaryKeyRelatedField(source="loft", queryset=Loft.objects.all())
+    loftName = serializers.CharField(source="loft.name", read_only=True)
+    instrumentNo = serializers.CharField(source="instrument_no")
+    stopDate = serializers.DateField(
+        source="stop_date",
+        error_messages={
+            "required": "止日不得为空",
+            "null": "止日不得为空",
+            "invalid": "止日格式不正确",
+        },
+    )
+    pastedBy = serializers.CharField(source="pasted_by.username", read_only=True)
+    pastedAt = serializers.DateTimeField(source="pasted_at", read_only=True)
+    voidedAt = serializers.DateTimeField(source="voided_at", read_only=True)
+    isCurrent = serializers.SerializerMethodField()
+    isExpired = serializers.SerializerMethodField()
+
+    class Meta:
+        model = HygrometerSticker
+        fields = (
+            "id",
+            "loftId",
+            "loftName",
+            "instrumentNo",
+            "stopDate",
+            "pastedBy",
+            "pastedAt",
+            "voidedAt",
+            "isCurrent",
+            "isExpired",
+        )
+        read_only_fields = (
+            "id",
+            "loftName",
+            "pastedBy",
+            "pastedAt",
+            "voidedAt",
+            "isCurrent",
+            "isExpired",
+        )
+
+    def get_isCurrent(self, obj):
+        return obj.voided_at is None
+
+    def get_isExpired(self, obj):
+        return obj.stop_date < timezone.localdate()
+
+
+class HygrometerStickerRenewSerializer(serializers.ModelSerializer):
+    """续期：仅允许改止日（与仪器编号），不动帆布间/粘贴人/作废时刻。"""
+
+    instrumentNo = serializers.CharField(source="instrument_no", required=False)
+    stopDate = serializers.DateField(
+        source="stop_date",
+        error_messages={
+            "required": "止日不得为空",
+            "null": "止日不得为空",
+            "invalid": "止日格式不正确",
+        },
+    )
+
+    class Meta:
+        model = HygrometerSticker
+        fields = ("stopDate", "instrumentNo")

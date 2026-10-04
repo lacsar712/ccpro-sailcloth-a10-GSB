@@ -5,7 +5,7 @@ from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
-from core.models import ClothRoll, DipRun, Loft
+from core.models import ClothRoll, DipRun, HygrometerSticker, Loft
 
 User = get_user_model()
 
@@ -87,9 +87,18 @@ class Command(BaseCommand):
                 ),
             ]
         )
+        # 湿度计止日贴纸：北岸帆布间现行贴纸止日写成昨天（已过期），
+        # 该间浸渍中卷 R-01 时长仍空 —— 用于演示过期贴纸挡住补写时长。
+        HygrometerSticker.objects.create(
+            loft=loft,
+            instrument_no="HYG-北岸-01",
+            stop_date=timezone.localdate() - timedelta(days=1),
+            pasted_by=admin,
+        )
         self.stdout.write(
             self.style.SUCCESS(
                 f"种子完成：帆布间 {Loft.objects.count()}，布卷 {ClothRoll.objects.count()}，"
-                f"浸渍 {DipRun.objects.count()}"
+                f"浸渍 {DipRun.objects.count()}，贴纸 {HygrometerSticker.objects.count()}"
+                "（北岸帆布间止日为昨天）"
             )
         )

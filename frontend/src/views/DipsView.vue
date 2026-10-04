@@ -5,6 +5,8 @@ import api from '../api'
 const dips = ref([])
 const rolls = ref([])
 const error = ref('')
+const cureBusyId = ref(null)
+const cureDrafts = reactive({})
 const form = reactive({
   rollId: null,
   startedAt: '',
@@ -19,12 +21,28 @@ function localNow() {
   return d.toISOString().slice(0, 16)
 }
 
+function errMsg(e, fallback) {
+  const d = e.response?.data
+  if (!d) return fallback
+  if (typeof d === 'string') return d
+  if (d.detail) return d.detail
+  for (const key of ['cureHours', 'nonFieldErrors']) {
+    const v = d[key]
+    if (Array.isArray(v) && v.length) return String(v[0])
+    if (typeof v === 'string') return v
+  }
+  return fallback
+}
+
 async function load() {
   error.value = ''
   try {
     const [d, r] = await Promise.all([api.get('/dips/'), api.get('/rolls/')])
     dips.value = d.data.results || d.data
     rolls.value = r.data.results || r.data
+    for (const dip of dips.value) {
+      cureDrafts[dip.id] = dip.cureHours ?? ''
+    }
     if (!form.rollId && rolls.value.length) form.rollId = rolls.value[0].id
     if (!form.startedAt) form.startedAt = localNow()
   } catch {
@@ -48,7 +66,23 @@ async function create() {
     form.startedAt = localNow()
     await load()
   } catch (e) {
-    error.value = e.response?.data?.detail || JSON.stringify(e.response?.data) || '创建失败'
+    error.value = errMsg(e, '创建失败')
+  }
+}
+
+async function saveCureHours(dip) {
+  error.value = ''
+  cureBusyId.value = dip.id
+  try {
+    const raw = cureDrafts[dip.id]
+    await api.patch(`/dips/${dip.id}/`, {
+      cureHours: raw === '' || raw === null ? null : raw,
+    })
+    await load()
+  } catch (e) {
+    error.value = errMsg(e, '保存固化时长失败')
+  } finally {
+    cureBusyId.value = null
   }
 }
 
@@ -58,7 +92,10 @@ onMounted(load)
 <template>
   <div>
     <h1>浸渍台账</h1>
-    <p class="sub">次要全量列表。日常浸渍请在晾晒架右侧面板登记；时长 ≥ 12 小时后方可将对应布卷标为已固化。</p>
+    <p class="sub">
+      次要全量列表。日常浸渍请在晾晒架右侧面板登记；时长 ≥ 12 小时后方可将对应布卷标为已固化。
+      补写/改写时长须该间湿度计贴纸在止日内，否则后端挡住。
+    </p>
     <p v-if="error" class="error">{{ error }}</p>
 
     <form class="panel row" @submit.prevent="create">
@@ -91,6 +128,7 @@ onMounted(load)
           <th>树脂 %</th>
           <th>固化时长 h</th>
           <th>备注</th>
+          <th></th>
         </tr>
       </thead>
       <tbody>
@@ -99,8 +137,27 @@ onMounted(load)
           <td>{{ row.loftName }}</td>
           <td>{{ new Date(row.startedAt).toLocaleString() }}</td>
           <td>{{ row.resinPct }}</td>
-          <td>{{ row.cureHours ?? '—' }}</td>
+          <td>
+            <input
+              v-model="cureDrafts[row.id]"
+              class="cure-input"
+              type="number"
+              step="0.1"
+              min="0"
+              placeholder="—"
+            />
+          </td>
           <td>{{ row.notes }}</td>
+          <td>
+            <button
+              class="btn secondary"
+              type="button"
+              :disabled="cureBusyId === row.id"
+              @click="saveCureHours(row)"
+            >
+              保存时长
+            </button>
+          </td>
         </tr>
       </tbody>
     </table>

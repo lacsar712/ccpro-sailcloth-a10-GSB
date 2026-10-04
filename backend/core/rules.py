@@ -4,13 +4,42 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from .models import ClothRoll, DipRun
+from django.utils import timezone
+
+from .models import ClothRoll, DipRun, HygrometerSticker, Loft
 
 MIN_CURE_HOURS_FOR_CURED = Decimal("12")
 
 
 def latest_dip_run(roll: ClothRoll) -> DipRun | None:
     return roll.dip_runs.order_by("-started_at", "-id").first()
+
+
+def current_sticker(loft: Loft) -> HygrometerSticker | None:
+    """该帆布间现行（未作废）的湿度计止日贴纸，没有则 None。"""
+    return (
+        loft.hygrometer_stickers.filter(voided_at__isnull=True)
+        .order_by("-pasted_at", "-id")
+        .first()
+    )
+
+
+def cure_hours_gate(loft: Loft) -> tuple[bool, str]:
+    """
+    保存固化时长的贴纸闸门：
+    没有现行贴纸、或止日已过，则禁止补写/改写固化时长。
+    止日当天仍有效；贴纸不替代「标已固化需时长满十二小时」的规则。
+    """
+    sticker = current_sticker(loft)
+    if sticker is None:
+        return False, "该帆布间没有现行湿度计止日贴纸，禁止补写或改写固化时长"
+    if sticker.stop_date < timezone.localdate():
+        return (
+            False,
+            f"该帆布间湿度计止日贴纸已过止日（{sticker.stop_date.isoformat()}），"
+            "禁止补写或改写固化时长",
+        )
+    return True, ""
 
 
 def can_mark_roll_cured(roll: ClothRoll) -> tuple[bool, str]:
