@@ -1,6 +1,6 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
-import api from '../api'
+import api, { errText } from '../api'
 
 const dips = ref([])
 const rolls = ref([])
@@ -48,7 +48,7 @@ async function create() {
     form.startedAt = localNow()
     await load()
   } catch (e) {
-    error.value = e.response?.data?.detail || JSON.stringify(e.response?.data) || '创建失败'
+    error.value = errText(e, '创建失败')
   }
 }
 
@@ -58,7 +58,7 @@ onMounted(load)
 <template>
   <div>
     <h1>浸渍台账</h1>
-    <p class="sub">次要全量列表。日常浸渍请在晾晒架右侧面板登记；时长 ≥ 12 小时后方可将对应布卷标为已固化。</p>
+    <p class="sub">次要全量列表。日常浸渍请在晾晒架右侧面板登记；写固化时长受本间止日贴纸约束（无贴纸或过止日将被拒绝），时长 ≥ 12 小时后方可将对应布卷标为已固化。</p>
     <p v-if="error" class="error">{{ error }}</p>
 
     <form class="panel row" @submit.prevent="create">

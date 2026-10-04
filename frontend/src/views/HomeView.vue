@@ -1,10 +1,11 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import api from '../api'
+import api, { errText } from '../api'
 
 const lofts = ref([])
 const rolls = ref([])
 const dips = ref([])
+const stickers = ref([])
 const error = ref('')
 const panelError = ref('')
 const selectedId = ref(null)
@@ -18,11 +19,18 @@ const dipForm = reactive({
   cureHours: '',
   notes: '',
 })
+const hourEdits = reactive({})
 
 function localNow() {
   const d = new Date()
   d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
   return d.toISOString().slice(0, 16)
+}
+
+function todayStr() {
+  const d = new Date()
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
+  return d.toISOString().slice(0, 10)
 }
 
 const selected = computed(() => rolls.value.find((r) => r.id === selectedId.value) || null)
@@ -39,19 +47,54 @@ const selectedDips = computed(() => {
   return dips.value.filter((d) => d.rollId === selectedId.value)
 })
 
+const selectedSticker = computed(() => {
+  if (!selected.value) return null
+  return (
+    stickers.value.find((s) => s.loftId === selected.value.loftId && !s.voidedAt) || null
+  )
+})
+
+// 仅作提示：拦截以后端为准，面板不靠藏按钮
+const stickerLine = computed(() => {
+  if (!selected.value) return null
+  const s = selectedSticker.value
+  if (!s) {
+    return { text: '本间未张贴湿度计止日贴纸：写固化时长将被拒绝', cls: 'sticker-bad' }
+  }
+  if (s.stopDate < todayStr()) {
+    return {
+      text: `本间贴纸已过止日（${s.stopDate}）：禁止补写或改写固化时长`,
+      cls: 'sticker-bad',
+    }
+  }
+  if (s.stopDate === todayStr()) {
+    return { text: `本间贴纸止日为今天（${s.stopDate}），仍有效`, cls: 'sticker-warn' }
+  }
+  return { text: `本间贴纸有效至止日 ${s.stopDate}（仪器 ${s.instrumentNo}）`, cls: 'sticker-ok' }
+})
+
 const recentFeed = computed(() => dips.value.slice(0, 12))
+
+function syncHourEdits() {
+  for (const d of dips.value) {
+    hourEdits[d.id] = d.cureHours ?? ''
+  }
+}
 
 async function load() {
   error.value = ''
   try {
-    const [l, r, d] = await Promise.all([
+    const [l, r, d, s] = await Promise.all([
       api.get('/lofts/'),
       api.get('/rolls/'),
       api.get('/dips/'),
+      api.get('/stickers/?current=1'),
     ])
     lofts.value = l.data.results || l.data
     rolls.value = r.data.results || r.data
     dips.value = d.data.results || d.data
+    stickers.value = s.data.results || s.data
+    syncHourEdits()
   } catch {
     error.value = '晾晒架加载失败'
   }
@@ -79,11 +122,10 @@ async function setStatus(status) {
     await api.patch(`/rolls/${selected.value.id}/`, { status })
     await load()
   } catch (e) {
-    const data = e.response?.data
-    panelError.value =
-      data?.status?.[0] ||
-      data?.detail ||
+    panelError.value = errText(
+      e,
       '状态更新失败（标「已固化」需最近浸渍固化时长 ≥ 12 小时）'
+    )
   } finally {
     panelBusy.value = false
   }
@@ -116,10 +158,23 @@ async function logDip() {
     dipForm.startedAt = localNow()
     await load()
   } catch (e) {
-    panelError.value =
-      e.response?.data?.detail ||
-      JSON.stringify(e.response?.data) ||
-      '登记浸渍失败'
+    panelError.value = errText(e, '登记浸渍失败')
+  } finally {
+    panelBusy.value = false
+  }
+}
+
+async function saveHours(row) {
+  panelError.value = ''
+  panelBusy.value = true
+  try {
+    const raw = hourEdits[row.id]
+    await api.patch(`/dips/${row.id}/`, {
+      cureHours: raw === '' || raw === null ? null : raw,
+    })
+    await load()
+  } catch (e) {
+    panelError.value = errText(e, '保存固化时长失败')
   } finally {
     panelBusy.value = false
   }
@@ -210,6 +265,9 @@ onMounted(load)
         </span>
         <span class="hint">{{ selected.fabricWeightGsm }} gsm</span>
       </div>
+      <p v-if="stickerLine" class="sticker-line" :class="stickerLine.cls">
+        {{ stickerLine.text }}
+      </p>
       <p v-if="selected.notes" class="hint">{{ selected.notes }}</p>
       <p v-if="panelError" class="error">{{ panelError }}</p>
 
@@ -263,10 +321,29 @@ onMounted(load)
           <li v-for="row in selectedDips" :key="row.id">
             <span>{{ new Date(row.startedAt).toLocaleString() }}</span>
             <span>{{ row.resinPct }}%</span>
-            <span>{{ row.cureHours ?? '—' }} h</span>
+            <span class="hour-edit">
+              <input
+                v-model="hourEdits[row.id]"
+                type="number"
+                step="0.1"
+                min="0"
+                placeholder="时长 h"
+              />
+              <button
+                class="btn secondary btn-xs"
+                type="button"
+                :disabled="panelBusy"
+                @click="saveHours(row)"
+              >
+                保存时长
+              </button>
+            </span>
           </li>
         </ul>
         <p v-else class="hint" style="margin:0">本卷尚无浸渍</p>
+        <p class="hint" style="margin:0">
+          补写/改写固化时长受本间止日贴纸约束；过了止日将被拒绝。
+        </p>
       </div>
     </aside>
   </div>

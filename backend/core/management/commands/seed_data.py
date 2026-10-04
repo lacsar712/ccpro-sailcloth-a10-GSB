@@ -5,7 +5,7 @@ from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
-from core.models import ClothRoll, DipRun, Loft
+from core.models import ClothRoll, DipRun, HygrometerSticker, Loft
 
 User = get_user_model()
 
@@ -43,53 +43,69 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS(f"worker {'created' if created else 'updated'}"))
 
         if Loft.objects.exists():
-            self.stdout.write("业务数据已存在，跳过业务种子写入。")
-            return
-
-        loft = Loft.objects.create(
-            name="北岸帆布间",
-            location="港区二号库",
-            notes="浸渍防水台示范 loft",
-        )
-        r1 = ClothRoll.objects.create(
-            loft=loft, roll_code="R-01", status=ClothRoll.STATUS_DIPPING, fabric_weight_gsm=420
-        )
-        r2 = ClothRoll.objects.create(
-            loft=loft, roll_code="R-02", status=ClothRoll.STATUS_RAW, fabric_weight_gsm=380
-        )
-        r3 = ClothRoll.objects.create(
-            loft=loft, roll_code="R-03", status=ClothRoll.STATUS_CURED, fabric_weight_gsm=450
-        )
-
-        now = timezone.now()
-        DipRun.objects.bulk_create(
-            [
-                DipRun(
-                    roll=r1,
-                    started_at=now - timedelta(hours=8),
-                    resin_pct=Decimal("28.50"),
-                    cure_hours=None,
-                    notes="固化计时中",
-                ),
-                DipRun(
-                    roll=r2,
-                    started_at=now - timedelta(hours=1),
-                    resin_pct=Decimal("26.00"),
-                    cure_hours=Decimal("4.00"),
-                    notes="时长不足，不可标 cured",
-                ),
-                DipRun(
-                    roll=r3,
-                    started_at=now - timedelta(days=2),
-                    resin_pct=Decimal("30.00"),
-                    cure_hours=Decimal("14.50"),
-                    notes="已完成固化",
-                ),
-            ]
-        )
-        self.stdout.write(
-            self.style.SUCCESS(
-                f"种子完成：帆布间 {Loft.objects.count()}，布卷 {ClothRoll.objects.count()}，"
-                f"浸渍 {DipRun.objects.count()}"
+            self.stdout.write("业务数据已存在，跳过布卷/浸渍种子写入。")
+        else:
+            loft = Loft.objects.create(
+                name="北岸帆布间",
+                location="港区二号库",
+                notes="浸渍防水台示范 loft",
             )
-        )
+            r1 = ClothRoll.objects.create(
+                loft=loft, roll_code="R-01", status=ClothRoll.STATUS_DIPPING, fabric_weight_gsm=420
+            )
+            r2 = ClothRoll.objects.create(
+                loft=loft, roll_code="R-02", status=ClothRoll.STATUS_RAW, fabric_weight_gsm=380
+            )
+            r3 = ClothRoll.objects.create(
+                loft=loft, roll_code="R-03", status=ClothRoll.STATUS_CURED, fabric_weight_gsm=450
+            )
+
+            now = timezone.now()
+            DipRun.objects.bulk_create(
+                [
+                    DipRun(
+                        roll=r1,
+                        started_at=now - timedelta(hours=8),
+                        resin_pct=Decimal("28.50"),
+                        cure_hours=None,
+                        notes="固化计时中",
+                    ),
+                    DipRun(
+                        roll=r2,
+                        started_at=now - timedelta(hours=1),
+                        resin_pct=Decimal("26.00"),
+                        cure_hours=Decimal("4.00"),
+                        notes="时长不足，不可标 cured",
+                    ),
+                    DipRun(
+                        roll=r3,
+                        started_at=now - timedelta(days=2),
+                        resin_pct=Decimal("30.00"),
+                        cure_hours=Decimal("14.50"),
+                        notes="已完成固化",
+                    ),
+                ]
+            )
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"种子完成：帆布间 {Loft.objects.count()}，布卷 {ClothRoll.objects.count()}，"
+                    f"浸渍 {DipRun.objects.count()}"
+                )
+            )
+
+        # 贴纸种子：保证首间帆布间有一张现行贴纸，止日写成昨天（已过期，用于演示拦截）
+        demo_loft = Loft.objects.order_by("id").first()
+        if demo_loft and not demo_loft.hygrometer_stickers.filter(
+            voided_at__isnull=True
+        ).exists():
+            HygrometerSticker.objects.create(
+                loft=demo_loft,
+                instrument_no="HYG-01",
+                stop_date=timezone.localdate() - timedelta(days=1),
+                pasted_by=admin,
+            )
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"贴纸种子完成：{demo_loft.name} 现行贴纸止日为昨天（已过期）"
+                )
+            )

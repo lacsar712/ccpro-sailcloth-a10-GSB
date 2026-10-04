@@ -36,4 +36,18 @@ api.interceptors.response.use(
   }
 )
 
+// 从 DRF 错误响应中提取第一条可读文案（含字段级中文报错）
+export function errText(e, fallback = '操作失败') {
+  const data = e?.response?.data
+  if (!data) return fallback
+  if (typeof data === 'string') return data
+  if (typeof data.detail === 'string') return data.detail
+  for (const key of Object.keys(data)) {
+    const v = data[key]
+    if (Array.isArray(v) && v.length) return String(v[0])
+    if (typeof v === 'string') return v
+  }
+  return fallback
+}
+
 export default api

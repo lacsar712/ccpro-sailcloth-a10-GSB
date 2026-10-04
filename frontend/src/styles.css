@@ -402,6 +402,33 @@ th { background: var(--canvas-deep); color: var(--navy); }
 .drawer-form label { min-width: 0; }
 .drawer-form input { min-width: 0; width: 100%; }
 
+.sticker-line {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  border: 1px solid var(--line);
+}
+.sticker-ok { background: #eef6f1; color: var(--ok); border-color: #bcd9c8; }
+.sticker-warn { background: #faf4e4; color: #6b4f12; border-color: #e3d3a8; }
+.sticker-bad { background: #f7e6e6; color: var(--danger); border-color: #dfb3b3; }
+
+.hour-edit {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+.hour-edit input {
+  width: 90px;
+  min-width: 0;
+  padding: 4px 8px;
+  font-size: 0.88rem;
+}
+.btn-xs {
+  padding: 4px 10px;
+  font-size: 0.85rem;
+}
+
 @media (max-width: 800px) {
   .layout { grid-template-columns: 1fr; }
   .content { padding: 18px 16px; }

@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 
 
@@ -58,3 +59,35 @@ class DipRun(models.Model):
 
     def __str__(self):
         return f"Dip@{self.roll_id} {self.started_at}"
+
+
+class HygrometerSticker(models.Model):
+    """湿度计止日贴纸：每间帆布间现行（未作废）最多一张。"""
+
+    loft = models.ForeignKey(
+        Loft, on_delete=models.CASCADE, related_name="hygrometer_stickers"
+    )
+    instrument_no = models.CharField(max_length=60)
+    stop_date = models.DateField()
+    pasted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="pasted_stickers",
+    )
+    voided_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["loft"],
+                condition=models.Q(voided_at__isnull=True),
+                name="uniq_current_sticker_per_loft",
+            )
+        ]
+
+    def __str__(self):
+        state = "作废" if self.voided_at else "现行"
+        return f"{self.loft.name} 贴纸({state}) 止日 {self.stop_date}"

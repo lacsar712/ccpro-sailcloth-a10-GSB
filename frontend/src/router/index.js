@@ -4,12 +4,14 @@ import LoginView from '../views/LoginView.vue'
 import HomeView from '../views/HomeView.vue'
 import RollsView from '../views/RollsView.vue'
 import DipsView from '../views/DipsView.vue'
+import StickersView from '../views/StickersView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/login', name: 'login', component: LoginView, meta: { public: true } },
     { path: '/', name: 'rack', component: HomeView },
+    { path: '/stickers', name: 'stickers', component: StickersView },
     { path: '/rolls', name: 'rolls', component: RollsView, meta: { secondary: true } },
     { path: '/dips', name: 'dips', component: DipsView, meta: { secondary: true } },
   ],

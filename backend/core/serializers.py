@@ -1,7 +1,8 @@
+from django.utils import timezone
 from rest_framework import serializers
 
-from .models import ClothRoll, DipRun, Loft
-from .rules import can_mark_roll_cured
+from .models import ClothRoll, DipRun, HygrometerSticker, Loft
+from .rules import can_mark_roll_cured, cure_hours_block_message
 
 
 class LoftSerializer(serializers.ModelSerializer):
@@ -93,3 +94,64 @@ class DipRunSerializer(serializers.ModelSerializer):
             "created_at",
         )
         read_only_fields = ("id", "rollCode", "loftName", "created_at")
+
+    def validate(self, attrs):
+        # 写入非空固化时长（新建带时长 / 补写 / 改写）时校验该间现行贴纸；
+        # 登记新浸渍且时长留空不看贴纸。止日当天仍有效，过了止日中文挡住。
+        if attrs.get("cure_hours") is not None:
+            roll = attrs.get("roll") or getattr(self.instance, "roll", None)
+            if roll is not None:
+                msg = cure_hours_block_message(roll.loft)
+                if msg:
+                    raise serializers.ValidationError({"cureHours": msg})
+        return attrs
+
+
+class HygrometerStickerSerializer(serializers.ModelSerializer):
+    loftId = serializers.PrimaryKeyRelatedField(source="loft", queryset=Loft.objects.all())
+    loftName = serializers.CharField(source="loft.name", read_only=True)
+    instrumentNo = serializers.CharField(source="instrument_no", max_length=60)
+    stopDate = serializers.DateField(source="stop_date")
+    pastedBy = serializers.CharField(source="pasted_by.username", read_only=True)
+    voidedAt = serializers.DateTimeField(source="voided_at", read_only=True)
+    isCurrent = serializers.SerializerMethodField()
+    isExpired = serializers.SerializerMethodField()
+
+    class Meta:
+        model = HygrometerSticker
+        fields = (
+            "id",
+            "loftId",
+            "loftName",
+            "instrumentNo",
+            "stopDate",
+            "pastedBy",
+            "voidedAt",
+            "isCurrent",
+            "isExpired",
+            "created_at",
+        )
+        read_only_fields = (
+            "id",
+            "loftName",
+            "pastedBy",
+            "voidedAt",
+            "isCurrent",
+            "isExpired",
+            "created_at",
+        )
+
+    def get_isCurrent(self, obj):
+        return obj.voided_at is None
+
+    def get_isExpired(self, obj):
+        return obj.stop_date < timezone.localdate()
+
+
+class StickerRenewSerializer(serializers.Serializer):
+    """续期入参：新止日必填，仪器编号可随贴随改。"""
+
+    stopDate = serializers.DateField(source="stop_date")
+    instrumentNo = serializers.CharField(
+        source="instrument_no", max_length=60, required=False, allow_blank=False
+    )
